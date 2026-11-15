@@ -1,6 +1,7 @@
 """Distribution and dispatch regressions, runnable against an installed wheel."""
 import hashlib
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -14,7 +15,7 @@ from PIL import Image
 from h3_image_mlx import generate
 from h3_image_mlx._stage import select_backend
 from h3_image_mlx.download import _download_file
-from h3_image_mlx.models import check_models
+from h3_image_mlx.models import check_models, manifest_for, model_paths
 
 
 class PackageTests(unittest.TestCase):
@@ -59,6 +60,50 @@ class PackageTests(unittest.TestCase):
             self.assertEqual(calls, ["text","references","dit","vae"])
             with self.assertRaisesRegex(ValueError, "16"):
                 generate("Edit", models=root, references=paths+[paths[0]])
+
+    def test_manifest_override_runs_another_checkpoint_family(self):
+        """H3_MANIFEST: a second pinned family in its own directory."""
+        manifest = {"total_bytes": 6, "files": [
+            {"path": "diffusion_models/other-dit.safetensors", "bytes": 3,
+             "sha256": hashlib.sha256(b"abc").hexdigest(),
+             "modelscope": "https://example.test/dit", "huggingface": "https://example.test/dit"},
+            {"path": "text_encoders/other-text.safetensors", "bytes": 1,
+             "sha256": hashlib.sha256(b"d").hexdigest(),
+             "modelscope": "https://example.test/text", "huggingface": "https://example.test/text"},
+            {"path": "vae/other-vae.safetensors", "bytes": 1,
+             "sha256": hashlib.sha256(b"e").hexdigest(),
+             "modelscope": "https://example.test/vae", "huggingface": "https://example.test/vae"},
+            {"path": "tokenizer.json", "bytes": 1,
+             "sha256": hashlib.sha256(b"f").hexdigest(),
+             "modelscope": "https://example.test/tokenizer", "huggingface": "https://example.test/tokenizer"},
+            {"path": "vae/config.json", "bytes": 0,
+             "sha256": hashlib.sha256(b"").hexdigest(),
+             "modelscope": "https://example.test/config", "huggingface": "https://example.test/config"},
+        ]}
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            (root / "weights.json").write_text(json.dumps(manifest))
+            for entry in manifest["files"]:
+                path = root / entry["path"]
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(b"x" * entry["bytes"])
+                # Keep the hashes honest for the verification call.
+                manifest_entry = next(f for f in manifest["files"] if f["path"] == entry["path"])
+                manifest_entry["sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
+            (root / "weights.json").write_text(json.dumps(manifest))
+
+            with patch.dict(os.environ, {"H3_MANIFEST": str(root / "weights.json")}):
+                self.assertEqual(model_paths("int8"), tuple(f["path"] for f in manifest["files"]))
+                self.assertEqual(manifest_for("int8")["total_bytes"], 6)
+                self.assertEqual(check_models(root, hashes=True), root)
+                # BF16 is unaffected: the override names one INT8 family.
+                self.assertEqual(len(manifest_for("bf16")["files"]), 5)
+            # Without the override the pinned H3 manifest is back.
+            self.assertIn("minimax_h3_image", model_paths("int8")[0])
+
+            with patch.dict(os.environ, {"H3_MANIFEST": str(root / "missing.json")}):
+                with self.assertRaises(FileNotFoundError):
+                    manifest_for("int8")
 
     def test_invalid_request(self):
         with self.assertRaisesRegex(ValueError, "multiples"):

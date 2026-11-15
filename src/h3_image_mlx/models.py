@@ -1,6 +1,7 @@
 """Pinned INT8 and BF16 inference components, sharing the VAE and tokenizer."""
 import hashlib
 import json
+import os
 from pathlib import Path
 
 MANIFEST = json.loads(Path(__file__).with_name("weights.json").read_text())
@@ -10,10 +11,25 @@ DIT, TEXT, VAE, TOKENIZER, VAE_CONFIG = (entry["path"] for entry in MANIFEST["fi
 
 def manifest_for(precision="int8"):
     if precision == "int8":
-        return MANIFEST
+        return pinned_manifest()
     if precision == "bf16":
         return BF16_MANIFEST
     raise ValueError(f"Unknown weight precision: {precision}")
+
+
+def pinned_manifest():
+    """H3_MANIFEST: run another pinned INT8 checkpoint family.
+
+    The file has the shape of weights.json — one entry per component, each with
+    a path, size, SHA-256 and both download URLs — so paths, verification and
+    fetch all follow it unchanged. H3 Studio points it at the manifest sitting
+    beside a model's own files (e.g. P-H3-Image), which keeps that family in its
+    own directory instead of over H3's.
+    """
+    path = os.environ.get("H3_MANIFEST")
+    if not path:
+        return MANIFEST
+    return json.loads(Path(path).expanduser().read_text())
 
 
 def model_paths(precision="int8"):
