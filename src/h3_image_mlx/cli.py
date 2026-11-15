@@ -8,6 +8,7 @@ import tempfile
 from pathlib import Path
 
 from .api import MODEL_IDS, Lora, QwenOptions, generate_result
+from .events import Cancelled
 from .models import check_models
 
 
@@ -74,6 +75,7 @@ def main(argv=None):
     get.add_argument(
         "--source", choices=("modelscope", "huggingface"), default="modelscope"
     )
+    get.add_argument("--progress", action="store_true")
     verify = commands.add_parser("verify", help="Verify pinned file hashes")
     for command in (gen, get, verify):
         command.add_argument("--models", type=Path, required=True)
@@ -99,10 +101,16 @@ def main(argv=None):
         if args.model != "h3" and args.precision != "int8":
             raise ValueError("The Qwen model pack uses Q8 weights")
         if args.command == "fetch":
+            progress = (
+                (lambda e: print(json.dumps(e), file=sys.stderr, flush=True))
+                if getattr(args, "progress", False)
+                else None
+            )
             if args.model == "h3":
                 from .download import fetch
 
-                print(fetch(args.models, args.source, precision=args.precision))
+                print(fetch(args.models, args.source, precision=args.precision,
+                            on_progress=progress))
             else:
                 from .qwen.assets import fetch
 
@@ -172,6 +180,7 @@ def main(argv=None):
                 precision=args.precision,
                 qwen=QwenOptions(**fields) if args.model != "h3" else None,
                 on_progress=progress,
+                on_stage=progress,
             )
             args.output.parent.mkdir(parents=True, exist_ok=True)
             with tempfile.NamedTemporaryFile(
@@ -187,6 +196,9 @@ def main(argv=None):
                 args.metrics.parent.mkdir(parents=True, exist_ok=True)
                 args.metrics.write_text(json.dumps(result.metrics, indent=2))
             print(args.output)
+    except Cancelled as error:
+        print(str(error), file=sys.stderr)
+        return 2
     except (ValueError, OSError, RuntimeError) as error:
         print(str(error), file=sys.stderr)
         return 1

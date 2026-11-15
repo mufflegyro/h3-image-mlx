@@ -3,8 +3,12 @@ import json
 import os
 import re
 import sys
+import time
 from pathlib import Path
+from .events import Cancelled, Heartbeat, SignalCanceller, check_cancel, emit
 from .models import model_paths, manifest_for
+
+CANCELLED_EXIT = 2  # distinct from a failure (1) so the parent can tell them apart
 
 
 def select_backend(requested, device, precision="int8"):
@@ -21,12 +25,13 @@ def select_backend(requested, device, precision="int8"):
     return requested
 
 
-def main(stage, work):
+def main(stage, work, cancel=None):
     import mlx.core as mx
     from . import core
     request = json.loads((work / "request.json").read_text())
     info = mx.device_info()
     precision = request.get("precision", "int8")
+    check_cancel(cancel)
     dit, text, vae, tokenizer, vae_config = model_paths(precision)
     backend = select_backend(request["backend"], info["device_name"], precision)
     core.backend.set(backend)
@@ -45,14 +50,17 @@ def main(stage, work):
         # H3_TEXT / H3_TOKENIZER / H3_VAE / H3_DIT: use another checkpoint (e.g. P-H3-Image) instead of the manifest's.
         x, tags, _ = encode(os.environ.get("H3_TEXT") or models / text, os.environ.get("H3_TOKENIZER") or models / tokenizer, request["prompt"], refs)
         mx.save_safetensors(embedding, {"embedding": x, "tags": tags})
+        emit("progress", stage=stage, step=1, total=1)
     elif stage == "references":
         from .ref_vae import encode_reference
         weights = core.Weights(models / vae, True)
         stats = json.loads((models / vae_config).read_text())
         zs = {}
         for i, ref in enumerate(refs):
+            check_cancel(cancel)
             zs[str(i)] = encode_reference(weights, ref, stats)
             mx.eval(zs[str(i)])
+            emit("progress", stage=stage, step=i + 1, total=len(refs))
         mx.save_safetensors(latents, zs)
     elif stage == "dit":
         from .dit import denoise
@@ -63,17 +71,46 @@ def main(stage, work):
         rows = inputs["embedding"].shape[0] + width * height // 1024 + sum(z.shape[1] * z.shape[2] // 4 for z in zs)
         resident = mode == "resident" or (auto_resident and rows <= 8192)
         core.m5_resident.set(m5 and resident)
+
+        def progress(step, elapsed, total=None):
+            emit("progress", stage=stage, step=step, total=total, seconds=round(elapsed, 3))
+
         # H3_DIT=<file>: use another DiT checkpoint with the same layout (e.g. one with a LoRA merged in).
-        z, _ = denoise(os.environ.get("H3_DIT") or models / dit, inputs["embedding"], width, height, request["seed"], resident, zs, inputs["tags"], precision=precision)
+        z, _ = denoise(os.environ.get("H3_DIT") or models / dit, inputs["embedding"], width, height, request["seed"], resident, zs, inputs["tags"], precision=precision, progress=progress, cancel=cancel)
         mx.save_safetensors(result, {"latent": z})
     elif stage == "vae":
         from .vae import decode
+        check_cancel(cancel)
         stats = json.loads((models / vae_config).read_text())
         decode(os.environ.get("H3_VAE") or models / vae, mx.load(result)["latent"], stats).save(work / "image.png")
+        emit("progress", stage=stage, step=1, total=1)
     else:
         raise ValueError(f"Unknown stage: {stage}")
     mx.synchronize()
 
 
+def run(argv):
+    """Run one stage, reporting its lifecycle on stderr as JSON lines.
+
+    The start line is written before MLX is imported so the parent learns the
+    stage began before the interpreter finishes loading.
+    """
+    stage, work = argv[1], Path(argv[2])
+    started = time.monotonic()
+    emit("stage", stage=stage, phase="start", pid=os.getpid())
+    cancel = SignalCanceller().install()
+    try:
+        with Heartbeat(stage):
+            main(stage, work, cancel)
+    except Cancelled as error:
+        emit("cancelled", stage=stage, reason=str(error) or "Cancelled")
+        return CANCELLED_EXIT
+    except BaseException as error:
+        emit("stage", stage=stage, phase="error", error=f"{type(error).__name__}: {error}")
+        raise
+    emit("stage", stage=stage, phase="end", seconds=round(time.monotonic() - started, 3))
+    return 0
+
+
 if __name__ == "__main__":
-    main(sys.argv[1], Path(sys.argv[2]))
+    sys.exit(run(sys.argv))

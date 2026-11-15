@@ -1,7 +1,7 @@
 """Distribution and dispatch regressions, runnable against an installed wheel."""
 import hashlib
 import json
-import subprocess
+import sys
 import tempfile
 import unittest
 from importlib.resources import files
@@ -41,16 +41,19 @@ class PackageTests(unittest.TestCase):
             paths = [root / f"reference-{i}.png" for i in reversed(range(16))]
             for i, path in enumerate(paths):
                 Image.new("RGB", (32, 32), (i, 0, 0)).save(path)
-            def run(command, **kwargs):
-                stage, folder = command[-2:]
-                work = Path(folder)
+            stage_script = root / "fake_stage.py"
+            stage_script.write_text(
+                "import sys\nfrom pathlib import Path\nfrom PIL import Image\n"
+                "stage, work = sys.argv[1], Path(sys.argv[2])\n"
+                "if stage == 'vae':\n"
+                "    Image.new('RGB', (256, 256), 'blue').save(work / 'image.png')\n"
+            )
+            def command(stage, work):
                 calls.append(stage)
-                request = json.loads((work / "request.json").read_text())
+                request = json.loads((Path(work) / "request.json").read_text())
                 self.assertEqual(request["references"], list(map(str, paths)))
-                if stage == "vae":
-                    Image.new("RGB", (256, 256), "blue").save(work / "image.png")
-                return subprocess.CompletedProcess(command, 0, "", "")
-            with patch("h3_image_mlx.pipeline.check_models", return_value=root), patch("h3_image_mlx.pipeline.subprocess.run", side_effect=run):
+                return [sys.executable, str(stage_script), stage, str(work)]
+            with patch("h3_image_mlx.pipeline.check_models", return_value=root), patch("h3_image_mlx.pipeline._stage_command", side_effect=command):
                 image = generate("Use <Picture 16>", models=root, references=paths, width=256, height=256)
             self.assertEqual(image.getpixel((0, 0)), (0, 0, 255))
             self.assertEqual(calls, ["text","references","dit","vae"])

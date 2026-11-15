@@ -61,16 +61,26 @@ def generate_result(
     precision="int8",
     qwen: QwenOptions | None = None,
     on_progress: Callable | None = None,
+    on_stage: Callable | None = None,
     cancel=None,
 ) -> GenerationResult:
     if model == "h3":
         if qwen is not None:
             raise ValueError("QwenOptions require model='qwen-image-2.1-turbo'")
-        if on_progress is not None or cancel is not None:
-            raise ValueError(
-                "Progress and cancellation callbacks currently apply to Qwen requests"
-            )
         from .pipeline import generate as h3_generate
+
+        metrics = {"stages": {}, "progress": []}
+
+        def stage_event(event):
+            if event.get("phase") == "end" and "seconds" in event:
+                metrics["stages"][event["stage"]] = event["seconds"]
+            if on_stage is not None:
+                on_stage(event)
+
+        def progress_event(event):
+            metrics["progress"].append(event)
+            if on_progress is not None:
+                on_progress(event)
 
         return GenerationResult(
             h3_generate(
@@ -83,7 +93,11 @@ def generate_result(
                 backend=backend,
                 dit_mode=dit_mode,
                 precision=precision,
-            )
+                on_stage=stage_event,
+                on_progress=progress_event,
+                cancel=cancel,
+            ),
+            metrics,
         )
     if model == "qwen-image-2.1-turbo":
         if precision != "int8" or dit_mode != "auto":
