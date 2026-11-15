@@ -9,6 +9,7 @@ import time
 
 import numpy as np
 from .core import Weights, attention, backend, flag, heads, m5_resident, mx, norm, rope, swiglu
+from .events import check_cancel
 
 # P-H3-Image (PrunaAI) ships no sampling metadata; this is the checkpoint's own 8-step grid.
 PH3_SIGMAS = [1.0, 0.984753, 0.967905, 0.951688, 0.925372, 0.881923, 0.810083, 0.528718, 0.0]
@@ -130,11 +131,12 @@ def patchify(latent):
 
 def denoise(
     path, text, width, height, seed, resident=True, refs=(), tags=None, progress=None,
-    precision=None,
+    precision=None, cancel=None,
 ):
     if min(width, height) < 32 or width % 32 or height % 32:
         raise ValueError("Image dimensions must be positive multiples of 32")
     began = time.perf_counter()
+    check_cancel(cancel)
     w = Weights(path, resident)
     if precision == "bf16":
         for key, spec in w.header.items():
@@ -211,6 +213,7 @@ def denoise(
     profile["setup_s"] = time.perf_counter() - began
     last = len(sigmas) - 2
     for step, (sigma, next_sigma) in enumerate(itertools.pairwise(sigmas)):
+        check_cancel(cancel)
         start = time.monotonic()
         previous = None
         resident_batch = native and step > 0 and pipelined
@@ -267,7 +270,7 @@ def denoise(
         mx.eval(patches, *([sound] if audio else []))
         profile["steps"].append(time.monotonic() - start)
         if progress:
-            progress(step + 1, time.monotonic() - start)
+            progress(step + 1, time.monotonic() - start, total=last + 1)
     latent = (
         patches.reshape(rows, cols, 24, 2, 2)
         .transpose(2, 0, 3, 1, 4)

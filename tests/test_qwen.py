@@ -44,8 +44,9 @@ class Requests(unittest.TestCase):
             generate("x", models="missing", qwen=QwenOptions())
         with self.assertRaisesRegex(ValueError, "Unknown model"):
             generate("x", models="missing", model="qwen-image-2.0")
-        with self.assertRaisesRegex(ValueError, "callbacks"):
-            generate("x", models="missing", on_progress=print)
+        # H3 accepts progress and cancellation; the weights are what is missing here.
+        with self.assertRaisesRegex(FileNotFoundError, "Missing model file"):
+            generate("x", models="missing", on_progress=print, on_stage=print)
 
     def test_uncached_policy_rejects_unverified_execution_paths(self):
         for backend, options in (

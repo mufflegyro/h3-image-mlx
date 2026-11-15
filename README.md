@@ -147,6 +147,24 @@ h3-image-mlx generate --models ./models --output edit.png \
 
 You can pass up to 16 references. On an M5 Pro, we completed one- and two-reference edits. The 16-reference test reached the third of six denoising steps before cancellation. [Validation notes](VALIDATION.md)
 
+## Progress and cancellation
+
+`feat/progress-cancel` (this fork, pinned by H3 Studio) reports what each stage is doing and can stop it. The stage children write JSON lines to stderr; the parent reads them while the stage runs, so a caller sees a stage start before the interpreter finishes importing MLX, per-step denoise progress, heartbeats and the stage's own timings.
+
+```bash
+h3-image-mlx generate --models ./models --output out.png --progress \
+  --prompt 'A brass orrery on a dark table'
+```
+
+```text
+{"event": "stage", "stage": "dit", "phase": "start", "pid": 4711}
+{"event": "progress", "stage": "dit", "step": 1, "total": 6, "seconds": 8.31}
+{"event": "heartbeat", "stage": "dit", "elapsed": 30.0}
+{"event": "stage", "stage": "dit", "phase": "end", "seconds": 51.9}
+```
+
+In Python, `generate(..., on_stage=..., on_progress=..., cancel=...)` and `generate_result(...)` accept the same callbacks for H3. `cancel` is a predicate checked between denoise steps and while a stage runs; a cancelled stage is terminated and `Cancelled` is raised instead of an image, and the temporary directory is removed. A stage that ignores SIGTERM is killed after `H3_CANCEL_GRACE` seconds. `h3-image-mlx fetch --progress` reports per-file and overall bytes, including the resume offset and the hash-verification phase.
+
 ## How it works
 
 The pipeline reduces memory use at three levels: between model stages, within the denoiser, and during image decoding.
