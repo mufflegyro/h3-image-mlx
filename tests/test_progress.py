@@ -180,9 +180,12 @@ class ProgressTests(unittest.TestCase):
         image = Image.new("RGB", (64, 64), "red")
         with patch("h3_image_mlx.pipeline.generate", return_value=image) as h3:
             result = generate_result("prompt", models=self.root, on_progress=self.progress.append,
-                                     on_stage=self.stages.append, cancel=lambda: False)
+                                     on_stage=self.stages.append, on_log=self.logs.append,
+                                     cancel=lambda: False)
         self.assertIs(result.image, image)
         self.assertEqual(h3.call_args.kwargs["cancel"](), False)
+        h3.call_args.kwargs["on_log"]("loading weights")
+        self.assertEqual(self.logs, ["loading weights"])
         h3.call_args.kwargs["on_stage"]({"event": "stage", "stage": "dit", "phase": "end", "seconds": 2.5})
         self.assertEqual(result.metrics["stages"], {"dit": 2.5})
         self.assertEqual(self.stages[-1]["stage"], "dit")

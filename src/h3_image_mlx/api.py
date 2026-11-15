@@ -62,6 +62,7 @@ def generate_result(
     qwen: QwenOptions | None = None,
     on_progress: Callable | None = None,
     on_stage: Callable | None = None,
+    on_log: Callable | None = None,
     cancel=None,
 ) -> GenerationResult:
     if model == "h3":
@@ -95,6 +96,7 @@ def generate_result(
                 precision=precision,
                 on_stage=stage_event,
                 on_progress=progress_event,
+                on_log=on_log,
                 cancel=cancel,
             ),
             metrics,
