@@ -151,6 +151,8 @@ You can pass up to 16 references. On an M5 Pro, we completed one- and two-refere
 
 `feat/progress-cancel` (this fork, pinned by H3 Studio) reports what each stage is doing and can stop it. The stage children write JSON lines to stderr; the parent reads them while the stage runs, so a caller sees a stage start before the interpreter finishes importing MLX, per-step denoise progress, heartbeats and the stage's own timings.
 
+The branch rebases onto upstream `main` and is published as `0.1.0a9.post1`: upstream's streaming and legacy-Metal work (0.1.0a9) plus the patch below. The version suffix exists so an environment built from an earlier fork pin reports itself as outdated instead of looking current.
+
 ```bash
 h3-image-mlx generate --models ./models --output out.png --progress \
   --prompt 'A brass orrery on a dark table'
