@@ -157,6 +157,16 @@ def test_a_metadata_flag_this_port_does_not_implement_is_refused(tmp_path):
         lora.load(path)
 
 
+def test_an_extensionless_adapter_loads(tmp_path):
+    # The render Mac stores uploads by SHA-256, with no suffix.
+    path = tmp_path / "adapter.safetensors"
+    mx.save_safetensors(str(path), pair("transformer_blocks.0.attn.to_out.0", HIDDEN, HIDDEN))
+    staged = tmp_path / "3179e630c3fbd96b9ad7aec3a54fe23fa0ddc63e4afb64607f10cdb3d05c862a"
+    path.rename(staged)
+    adapter = lora.load(staged)
+    assert "blocks.0.attn.out_proj" in adapter.parts
+
+
 def test_a_wrong_input_width_names_the_projection():
     adapter = lora.read(block_tensors())
     with pytest.raises(ValueError, match="takes 4-wide input"):

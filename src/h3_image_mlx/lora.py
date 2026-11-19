@@ -104,7 +104,10 @@ class Adapter:
 def load(path, scale=1.0):
     """Read a LoRA file into an Adapter, refusing anything it cannot apply faithfully."""
     check_scale(scale)
-    tensors = dict(mx.load(str(path)))
+    # Staged uploads are content-addressed and carry no extension (the render Mac
+    # receives a file named by its SHA-256), so name the format instead of
+    # letting mx infer it from a suffix it may not have.
+    tensors = dict(mx.load(str(path), format="safetensors"))
     metadata = file_metadata(path)
     return read(tensors, metadata, scale=scale, path=str(path))
 
