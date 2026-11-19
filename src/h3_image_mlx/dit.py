@@ -158,7 +158,11 @@ def denoise(
     audio = 2 if "audio_patch_proj.weight" in w.header else 0
     # Opt-in few-step mode: H3_LORA=<file> beside the quantized weights, H3_STEPS on a shifted uniform grid.
     if os.environ.get("H3_LORA"):
-        w.lora = Weights(os.environ["H3_LORA"])
+        from .lora import load as load_lora
+
+        raw_scale = os.environ.get("H3_LORA_SCALE")
+        w.lora = load_lora(os.environ["H3_LORA"],
+                           scale=float(raw_scale) if raw_scale not in (None, "") else 1.0)
     steps = int(flag("H3_STEPS"))
     if steps:
         shift = flag("H3_SHIFT") or 12.0
