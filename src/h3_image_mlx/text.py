@@ -7,6 +7,15 @@ from tokenizers import Tokenizer
 # P-H3-Image conditions on these hidden states of its 4B encoder (0 = embeddings, 36 = final norm output).
 PH3_STATES = (13, 19, 25, 31, 36)
 
+# The release's edit presentation puts this in front of the instruction unless
+# the prompt already carries it, or is the prompt upsampler's sectioned brief.
+PH3_EDIT_PREFIXES = ("Edit <Picture 1>.", "subject_definitions:")
+
+
+def ph3_edit_prompt(prompt):
+    """The instruction as P-H3-Image's edit presentation encodes it."""
+    return prompt if prompt.lstrip().startswith(PH3_EDIT_PREFIXES) else f"Edit <Picture 1>. {prompt}"
+
 
 def embed(w, key, ids):
     rows = mx.stack([w._read(key, row=i) for i in ids])
@@ -38,7 +47,16 @@ def encode(path, tokenizer_path, prompt, refs=()):
     layers = sum(key.startswith(lm + "layers.") and key.endswith(".input_layernorm.weight") for key in w.header)
     states = []
     if ph3 and refs:
-        raise NotImplementedError("P-H3-Image reference images are not ported yet")
+        # P-H3-Image's pack carries no vision tower, so the text encoder reads the
+        # instruction alone and the pictures reach the transformer through the
+        # ref2va packing instead. The release's edit presentation prefixes the
+        # instruction ("Edit <Picture 1>. "), and that prefix is what tells the
+        # model it is editing a picture rather than drawing a new one.
+        prompt = ph3_edit_prompt(prompt)
+        ids = tok.encode(prompt, add_special_tokens=False).ids[:4096]
+        if not ids:
+            raise ValueError("Empty prompt")
+        refs = ()
     if refs:
         from .vision import prepare_prompt
 
