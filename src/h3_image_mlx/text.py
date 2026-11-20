@@ -36,7 +36,7 @@ def connect(w, states):
     return mx.concatenate([w["text_connector.sink_embedding"][None], x[1:]])
 
 
-def encode(path, tokenizer_path, prompt, refs=()):
+def encode(path, tokenizer_path, prompt, refs=(), empty_picture=0.0):
     tok = Tokenizer.from_file(str(tokenizer_path))
     ids = tok.encode(prompt, add_special_tokens=False).ids[:4096]
     if not ids:
@@ -57,7 +57,7 @@ def encode(path, tokenizer_path, prompt, refs=()):
         if not ids:
             raise ValueError("Empty prompt")
         refs = ()
-    if os.environ.get("H3_EMPTY_PICTURE") and not ph3 and not refs:
+    if empty_picture > 0 and not ph3 and not refs:
         # Kijai's "text with empty image": a black picture's vision tokens in
         # front of the prompt keep H3 in its reference mode, which is far less
         # crusty than the text-only one. No reference latents are packed, so the

@@ -4,6 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import itertools
 import json
+import math
 import os
 import time
 
@@ -132,6 +133,7 @@ def patchify(latent):
 def denoise(
     path, text, width, height, seed, resident=True, refs=(), tags=None, progress=None,
     precision=None, cancel=None, initial=None, sigmas_override=None,
+    text_alt=None, tags_alt=None, empty_picture_end=1.0,
 ):
     if min(width, height) < 32 or width % 32 or height % 32:
         raise ValueError("Image dimensions must be positive multiples of 32")
@@ -184,6 +186,7 @@ def denoise(
     mods = [precompute(w, b, coords, 3, 6) for b in blocks]
     final_mod = precompute(w, "final_layer", coords, 1, 2)
     text = prepare_text(w, text)
+    alt_text = prepare_text(w, text_alt) if text_alt is not None else None
     mx.eval(text, final_mod, *mods)
     # The text refiner and compressed AdaLN projections are used only during setup.
     w.release()
@@ -213,6 +216,20 @@ def denoise(
     segments.append((target_start, target_start + rows * cols, 0))
     prefix = mx.concatenate(fixed)
     mx.eval(prefix)
+    conditions = [(prefix, segments, angles, audio_start)]
+    if alt_text is not None and not refs:
+        a_ntext = alt_text.shape[0]
+        a_angles = angles_for(w, a_ntext, [(rows, cols)], audio)
+        a_tags = np.asarray(tags_alt) if tags_alt is not None else np.ones(a_ntext, int)
+        a_splits = np.r_[0, np.flatnonzero(np.diff(a_tags)) + 1, a_ntext]
+        a_segments = [(a, b, int(a_tags[a])) for a, b in itertools.pairwise(a_splits)]
+        a_start = a_ntext
+        if audio:
+            a_segments.append((a_start, a_start + 2 * audio, 2))
+            a_start += 2 * audio
+        a_segments.append((a_start, a_start + rows * cols, 0))
+        mx.eval(alt_text)
+        conditions.append((alt_text, a_segments, a_angles, a_start))
     rng = np.random.default_rng(seed)
     shape = (24, rows * 2, cols * 2)
     noise = mx.array(rng.standard_normal(shape, dtype=np.float32))
@@ -233,7 +250,11 @@ def denoise(
     sound = mx.array(rng.standard_normal((2 * audio, 32), dtype=np.float32)) if audio else None
     profile["setup_s"] = time.perf_counter() - began
     last = len(sigmas) - 2
+    total_steps = len(sigmas) - 1
+    switch = (total_steps if len(conditions) == 1 else
+              max(1, math.ceil(empty_picture_end * total_steps)))
     for step, (sigma, next_sigma) in enumerate(itertools.pairwise(sigmas)):
+        prefix, segments, angles, audio_start = conditions[0 if step < switch else 1]
         check_cancel(cancel)
         start = time.monotonic()
         previous = None

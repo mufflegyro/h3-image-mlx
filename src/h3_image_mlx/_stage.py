@@ -50,8 +50,22 @@ def main(stage, work, cancel=None):
     if stage == "text":
         from .text import encode
         # H3_TEXT / H3_TOKENIZER / H3_VAE / H3_DIT: use another checkpoint (e.g. P-H3-Image) instead of the manifest's.
-        x, tags, _ = encode(os.environ.get("H3_TEXT") or models / text, os.environ.get("H3_TOKENIZER") or models / tokenizer, request["prompt"], refs)
-        mx.save_safetensors(embedding, {"embedding": x, "tags": tags})
+        end = float(os.environ.get("H3_EMPTY_PICTURE") or 0) / 100.0
+        end = min(max(end, 0.0), 1.0)
+        text_path = os.environ.get("H3_TEXT") or models / text
+        tokenizer_path = os.environ.get("H3_TOKENIZER") or models / tokenizer
+        if 0.0 < end < 1.0:
+            x, tags, _ = encode(text_path, tokenizer_path, request["prompt"], refs,
+                                empty_picture=1.0)
+            alt_x, alt_tags, _ = encode(text_path, tokenizer_path, request["prompt"], refs,
+                                        empty_picture=0.0)
+            mx.save_safetensors(embedding, {"embedding": x, "tags": tags,
+                                            "embedding_text_only": alt_x,
+                                            "tags_text_only": alt_tags})
+        else:
+            x, tags, _ = encode(text_path, tokenizer_path, request["prompt"], refs,
+                                empty_picture=end)
+            mx.save_safetensors(embedding, {"embedding": x, "tags": tags})
         emit("progress", stage=stage, step=1, total=1)
     elif stage == "references":
         from .ref_vae import encode_reference
@@ -78,7 +92,10 @@ def main(stage, work, cancel=None):
             emit("progress", stage=stage, step=step, total=total, seconds=round(elapsed, 3))
 
         # H3_DIT=<file>: use another DiT checkpoint with the same layout (e.g. one with a LoRA merged in).
-        z, _ = denoise(os.environ.get("H3_DIT") or models / dit, inputs["embedding"], width, height, request["seed"], resident, zs, inputs["tags"], precision=precision, progress=progress, cancel=cancel)
+        alt_x = inputs.get("embedding_text_only")
+        alt_tags = inputs.get("tags_text_only")
+        end = min(max(float(os.environ.get("H3_EMPTY_PICTURE") or 0) / 100.0, 0.0), 1.0)
+        z, _ = denoise(os.environ.get("H3_DIT") or models / dit, inputs["embedding"], width, height, request["seed"], resident, zs, inputs["tags"], precision=precision, progress=progress, cancel=cancel, text_alt=alt_x, tags_alt=alt_tags, empty_picture_end=end)
         mx.save_safetensors(result, {"latent": z})
     elif stage == "vae":
         from .vae import decode
