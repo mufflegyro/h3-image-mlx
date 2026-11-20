@@ -75,7 +75,7 @@ wheels = [
 
 [[package]]
 name = "h3-image-mlx"
-version = "0.1.0a9.post3"
+version = "0.1.0a9.post4"
 source = { editable = "." }
 dependencies = [
     { name = "httpx" },
