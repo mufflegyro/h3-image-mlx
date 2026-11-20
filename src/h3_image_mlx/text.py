@@ -57,6 +57,18 @@ def encode(path, tokenizer_path, prompt, refs=()):
         if not ids:
             raise ValueError("Empty prompt")
         refs = ()
+    if os.environ.get("H3_EMPTY_PICTURE") and not ph3 and not refs:
+        # Kijai's "text with empty image": a black picture's vision tokens in
+        # front of the prompt keep H3 in its reference mode, which is far less
+        # crusty than the text-only one. No reference latents are packed, so the
+        # composition is not tied to the blank picture.
+        import tempfile
+
+        from PIL import Image
+
+        blank = tempfile.mkdtemp(prefix="h3-empty-") + "/empty.png"
+        Image.new("RGB", (512, 512), (0, 0, 0)).save(blank)
+        refs = (str(blank),)
     if refs:
         from .vision import prepare_prompt
 
