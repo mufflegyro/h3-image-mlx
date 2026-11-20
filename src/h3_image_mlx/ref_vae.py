@@ -6,7 +6,7 @@ from .vae import tile_positions
 from .vision import reference_image
 
 
-def encode_reference(w, path, stats):
+def encode_reference(w, path, stats, sample=True):
     img = reference_image(path, 2048)
     normed = (img - np.array([0.485, 0.456, 0.406], dtype="f4")) / np.array(
         [0.229, 0.224, 0.225], dtype="f4"
@@ -95,12 +95,15 @@ def encode_reference(w, path, stats):
             )
         strips.append(np.concatenate(tiles, axis=1))
     mean, logvar = np.split(np.concatenate(strips, axis=0), 2, axis=-1)
-    noise = (
-        np.random.default_rng(42)
-        .standard_normal((24, H, W), dtype=np.float32)
-        .transpose(1, 2, 0)
-    )
-    z = mean + np.exp(0.5 * logvar.clip(-30, 20)) * noise
+    if sample:
+        noise = (
+            np.random.default_rng(42)
+            .standard_normal((24, H, W), dtype=np.float32)
+            .transpose(1, 2, 0)
+        )
+        z = mean + np.exp(0.5 * logvar.clip(-30, 20)) * noise
+    else:
+        z = mean
     z = (z - np.array(stats["latents_mean"], dtype="f4")) / np.array(
         stats["latents_std"], dtype="f4"
     )

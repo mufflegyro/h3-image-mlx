@@ -131,7 +131,7 @@ def patchify(latent):
 
 def denoise(
     path, text, width, height, seed, resident=True, refs=(), tags=None, progress=None,
-    precision=None, cancel=None,
+    precision=None, cancel=None, initial=None, sigmas_override=None,
 ):
     if min(width, height) < 32 or width % 32 or height % 32:
         raise ValueError("Image dimensions must be positive multiples of 32")
@@ -170,6 +170,13 @@ def denoise(
     if os.environ.get("H3_SIGMAS"):  # explicit grid, e.g. a subset of the checkpoint's own
         sigmas = [float(v) for v in os.environ["H3_SIGMAS"].split(",")]
         steps = len(sigmas) - 1
+    # A refine pass starts at a given sigma on its own tail grid, from a latent
+    # that already carries the picture (see refine.py).
+    if sigmas_override is not None:
+        sigmas = [float(v) for v in sigmas_override]
+        steps = len(sigmas) - 1
+        if not sigmas or sigmas[-1] != 0.0:
+            raise ValueError("an explicit refine grid must end at 0")
     coords = curve_coordinates(w, sigmas[:-1])
     if refs:
         coords = np.concatenate([coords, curve_coordinates(w, [0.001])])
@@ -207,7 +214,17 @@ def denoise(
     prefix = mx.concatenate(fixed)
     mx.eval(prefix)
     rng = np.random.default_rng(seed)
-    latent = mx.array(rng.standard_normal((24, rows * 2, cols * 2), dtype=np.float32))
+    shape = (24, rows * 2, cols * 2)
+    noise = mx.array(rng.standard_normal(shape, dtype=np.float32))
+    if initial is not None:
+        if tuple(initial.shape) != shape:
+            raise ValueError(
+                f"the refine latent is {tuple(initial.shape)}; this canvas needs {shape}"
+            )
+        # Flow-matching interpolation at the first sigma: x = (1 - s) x0 + s eps.
+        latent = (1.0 - sigmas[0]) * mx.array(initial).astype(mx.float32) + sigmas[0] * noise
+    else:
+        latent = noise
     patches = (
         latent.reshape(24, rows, 2, cols, 2)
         .transpose(1, 3, 0, 2, 4)
